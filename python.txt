@@ -1,0 +1,55 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+csv_path = "PPG.txt"
+df = pd.read_csv(csv_path)
+
+df.columns = df.columns.str.strip()
+df["Time"] = df["Time"].astype(str).str.replace(',', '.').astype(float)
+df["PPG"] = df["PPG"].astype(str).str.replace(',', '.').astype(float)
+
+df = df[(df["Time"] >= 2.0) & (df["Time"] <= 8.0)].reset_index(drop=True)
+df["Time"] = df["Time"] - df["Time"].iloc[0]
+
+x = df["PPG"].values
+N = len(x)
+T_total = df["Time"].iloc[-1]
+Ts = T_total / (N - 1)
+fs = 1 / Ts
+
+X_dft = []
+for k in range(N):
+    re = 0.0
+    im = 0.0
+    for n in range(N):
+        angle = 2 * np.pi * k * n / N
+        re += x[n] * np.cos(angle)
+        im -= x[n] * np.sin(angle)
+    X_dft.append(np.sqrt(re**2 + im**2))
+
+frequencies = np.linspace(0, fs, N)
+X_dft = np.array(X_dft)
+X_dft[0] = 0
+
+dom_index = np.argmax(X_dft[:N//2])
+dom_freq = frequencies[dom_index]
+bpm = dom_freq * 60
+
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8))
+
+ax1.plot(df["Time"], df["PPG"], color='blue')
+ax1.set_title("Señal PPG (2–8s)")
+ax1.set_xlabel("Tiempo (s)")
+ax1.set_ylabel("Voltaje")
+
+ax2.plot(frequencies[:N//2], X_dft[:N//2], color='red')
+ax2.axvline(dom_freq, color='green', linestyle='--', label=f'Frecuencia dominante: {dom_freq:.2f} Hz ({bpm:.0f} BPM)')
+ax2.set_title("Magnitud de la DFT")
+ax2.set_xlabel("Frecuencia (Hz)")
+ax2.set_ylabel("|X[k]|")
+ax2.set_xlim(0, 5)
+ax2.legend()
+
+plt.tight_layout()
+plt.show()

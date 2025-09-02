@@ -1,0 +1,288 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <Arduino_JSON.h>
+#include "PageIndex.h"
+
+#define PulseSensor_PIN 36 
+#define LED_PIN         23 
+#define Button_PIN      32
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+const char* ssid = "ESP32_WS";
+const char* password = "project123";
+
+IPAddress local_ip(192,168,1,1);
+IPAddress gateway(192,168,1,1);
+IPAddress subnet(255,255,255,0);
+
+unsigned long previousMillisGetHB = 0;
+unsigned long previousMillisResultHB = 0;
+const long intervalGetHB = 35;
+const long intervalResultHB = 1000;
+
+int timer_Get_BPM = 0;
+int PulseSensorSignal;
+int UpperThreshold = 520;
+int LowerThreshold = 500;
+int cntHB = 0;
+boolean ThresholdStat = true;
+int BPMval = 0;
+int x = 0;
+int y = 0;
+int lastx = 0;
+int lasty = 0;
+bool get_BPM = false;
+byte tSecond = 0;
+byte tMinute = 0;
+byte tHour   = 0;
+char tTime[10];
+
+const unsigned char Heart_Icon [] PROGMEM = {
+  0x00, 0x00, 0x18, 0x30, 0x3c, 0x78, 0x7e, 0xfc, 0xff, 0xfe, 0xff, 0xfe, 0xee, 0xee, 0xd5, 0x56, 
+  0x7b, 0xbc, 0x3f, 0xf8, 0x1f, 0xf0, 0x0f, 0xe0, 0x07, 0xc0, 0x03, 0x80, 0x01, 0x00, 0x00, 0x00
+};
+
+const char* PARAM_INPUT_1 = "BTN_Start_Get_BPM";
+String BTN_Start_Get_BPM = "";
+JSONVar JSON_All_Data;
+AsyncWebServer server(80);
+AsyncEventSource events("/events");
+
+void GetHeartRate() {
+  unsigned long currentMillisGetHB = millis();
+
+  if (currentMillisGetHB - previousMillisGetHB >= intervalGetHB) {
+    previousMillisGetHB = currentMillisGetHB;
+
+    PulseSensorSignal = analogRead(PulseSensor_PIN);
+
+    if (PulseSensorSignal > UpperThreshold && ThresholdStat == true) {
+      if (get_BPM == true) cntHB++;
+      ThresholdStat = false;
+      digitalWrite(LED_PIN,HIGH);
+    }
+
+    if (PulseSensorSignal < LowerThreshold) {
+      ThresholdStat = true;
+      digitalWrite(LED_PIN,LOW);
+    }
+
+    DrawGraph();
+
+    JSON_All_Data["heartbeat_Signal"] = PulseSensorSignal;
+    JSON_All_Data["BPM_TimeStamp"] = tTime;
+    JSON_All_Data["BPM_Val"] = BPMval;
+    JSON_All_Data["BPM_State"] = get_BPM;
+
+    String JSON_All_Data_Send = JSON.stringify(JSON_All_Data);
+    events.send(JSON_All_Data_Send.c_str(), "allDataJSON" , millis());
+  }
+
+  unsigned long currentMillisResultHB = millis();
+
+  if (currentMillisResultHB - previousMillisResultHB >= intervalResultHB) {
+    previousMillisResultHB = currentMillisResultHB;
+
+    if (get_BPM == true) {
+      timer_Get_BPM++;
+      if (timer_Get_BPM > 10) {
+        timer_Get_BPM = 1;
+        tSecond += 10;
+        if (tSecond >= 60) {
+          tSecond = 0;
+          tMinute += 1;
+        }
+        if (tMinute >= 60) {
+          tMinute = 0;
+          tHour += 1;
+        }
+
+        sprintf(tTime, "%02d:%02d:%02d",  tHour, tMinute, tSecond);
+        BPMval = cntHB * 6;
+        Serial.print("BPM : ");
+        Serial.println(BPMval);
+
+        display.fillRect(20, 48, 108, 18, BLACK);
+        display.drawBitmap(0, 47, Heart_Icon, 16, 16, WHITE);  
+        display.drawLine(0, 43, 127, 43, WHITE);  
+        display.setTextSize(2);
+        display.setTextColor(WHITE);
+        display.setCursor(20, 48);
+        display.print(": ");
+        display.print(BPMval);
+        display.setCursor(92, 48);
+        display.print("BPM");
+        display.display(); 
+        cntHB = 0;
+      }
+    }
+  }
+}
+
+void DrawGraph() {
+  if (x > 127) {
+    display.fillRect(0, 0, 128, 42, BLACK);
+    x = 0;
+    lastx = 0;
+  }
+
+  int ySignal = PulseSensorSignal; 
+  if (ySignal > 850) ySignal = 850;
+  if (ySignal < 350) ySignal = 350;
+  int ySignalMap = map(ySignal, 350, 850, 0, 40);
+  y = 40 - ySignalMap;
+
+  display.writeLine(lastx,lasty,x,y,WHITE);
+  display.display(); 
+
+  lastx = x;
+  lasty = y;
+  x++;
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println();
+  delay(2000);
+
+  analogReadResolution(10);
+  pinMode(LED_PIN,OUTPUT); 
+  pinMode(Button_PIN, INPUT_PULLUP);
+  sprintf(tTime, "%02d:%02d:%02d",  tHour, tMinute, tSecond);
+
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+
+  display.clearDisplay(); 
+  display.setTextColor(WHITE);
+  display.setTextSize(2);
+  display.setCursor(37, 0); 
+  display.print("ESP32"); 
+  display.setCursor(13, 20); 
+  display.print("HEARTBEAT"); 
+  display.setCursor(7, 40); 
+  display.print("MONITORING"); 
+  display.display();
+  delay(2000);
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(ssid, password);
+  delay(1000);
+  WiFi.softAPConfig(local_ip, gateway, subnet);
+
+  display.clearDisplay(); 
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0); 
+  display.print("Setting Up Servers...");
+  display.display();
+  delay(1000);
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
+    request->send_P(200, "text/html", MAIN_page);
+  });
+
+  events.onConnect([](AsyncEventSourceClient * client) {
+    if (client->lastId()) {
+      Serial.printf("Client reconnected! Last message ID: %u\n", client->lastId());
+    }
+    client->send("hello!", NULL, millis(), 10000);
+  });
+
+  server.on("/BTN_Comd", HTTP_GET, [] (AsyncWebServerRequest * request) {
+    if (request->hasParam(PARAM_INPUT_1)) {
+      BTN_Start_Get_BPM = request->getParam(PARAM_INPUT_1)->value();
+      Serial.println();
+      Serial.print("BTN_Start_Get_BPM : ");
+      Serial.println(BTN_Start_Get_BPM);
+    } else {
+      BTN_Start_Get_BPM = "No message";
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.addHandler(&events);
+  server.begin();
+
+  display.clearDisplay(); 
+  display.setCursor(0, 0); 
+  display.print("ESP32 IP address :");
+  display.setCursor(0, 10); 
+  display.print(WiFi.softAPIP());
+  display.display();
+  delay(3000);
+
+  display.clearDisplay(); 
+  display.drawLine(0, 43, 127, 43, WHITE);
+  display.setTextSize(2);
+  display.setCursor(10, 48);
+  display.print("HeartBeat");
+  display.display(); 
+}
+
+void loop() {
+  if (digitalRead(Button_PIN) == LOW || BTN_Start_Get_BPM == "START" || BTN_Start_Get_BPM == "STOP") {
+    delay(100);
+    BTN_Start_Get_BPM = "";
+    cntHB = 0;
+    BPMval = 0;
+    x = 0;
+    y = 0;
+    lastx = 0;
+    lasty = 0;
+    tSecond = 0;
+    tMinute = 0;
+    tHour   = 0;
+    sprintf(tTime, "%02d:%02d:%02d",  tHour, tMinute, tSecond);
+    get_BPM = !get_BPM;
+
+    if (get_BPM == true) {
+      display.clearDisplay(); 
+      display.setCursor(14, 0); 
+      display.print("Start Getting BPM"); 
+      display.setTextSize(3);
+      for (byte i = 3; i > 0; i--) {
+        display.setCursor(50, 20); 
+        display.print(i); 
+        display.display();
+        delay(1000);
+        display.setTextColor(BLACK);
+        display.setCursor(50, 20); 
+        display.print(i); 
+        display.display();
+      }
+      display.clearDisplay(); 
+      display.drawBitmap(0, 47, Heart_Icon, 16, 16, WHITE);
+      display.drawLine(0, 43, 127, 43, WHITE);
+      display.setTextSize(2);
+      display.setCursor(20, 48);
+      display.print(": 0 ");
+      display.setCursor(92, 48);
+      display.print("BPM");
+      display.display(); 
+    } else {
+      display.clearDisplay();
+      display.setTextSize(2);
+      display.setCursor(42, 25); 
+      display.print("STOP"); 
+      display.display();
+      delay(1000);
+      display.clearDisplay(); 
+      display.drawLine(0, 43, 127, 43, WHITE);
+      display.setTextSize(2);
+      display.setCursor(10, 48);
+      display.print("HeartBeat");
+      display.display(); 
+    }
+  }
+  GetHeartRate();
+}

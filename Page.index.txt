@@ -1,0 +1,220 @@
+const char MAIN_page[] PROGMEM = R"=====(
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32 Heart Rate Monitoring</title>
+    <style>
+      html {
+        font-family: Arial;
+        display: inline-block;
+        margin: 0px auto;
+        text-align: center;
+      }
+      h1 { font-size: 1.5rem; }
+      .textareaStyle {
+        width: 295px;
+        height: 70px;
+        border:solid 1px #DCDCDC;
+        box-shadow: 0px 0px 3px 0px #DCDCDC;
+        margin: 5px auto;
+      }
+      .divStyle {
+        border: 1px solid #DCDCDC;
+        border-radius: 10px;
+        width: 300px;
+        height: 50px;
+        margin: 0px auto;
+        box-shadow: 0px 2px 3px 0px #DCDCDC;
+        position: relative;
+      }
+      .child {
+        width: 300px;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+      }
+    </style>
+  </head>
+  <body>
+    <h1 style="color:#00878F;font-family:consolas;">ESP32 HEART RATE MONITORING</h1>
+    <br>
+    <canvas id="myCanvas" width="300" height="150" style="box-shadow: 0px 2px 3px 0px #DCDCDC;"></canvas>
+    <br><br>
+    <button type="button" id="BTN_Start_Stop" onclick="my_BTN_Start_Stop()">Start Calculating HeartBeat</button>
+    <p id="show_Info" hidden></p>
+    <br><br>
+    <div class="divStyle">
+      <div class="child">
+        <img width="27" height="27" src="data:image/png;base64,..."/>
+        <label style="font-size:18px;">Heart Rate</label>
+        <label id="bpm_Show" style="font-size:36px;"></label>
+      </div>
+    </div>
+    <br>
+    <h3 style="color:#00878F;">Registro de BPM</h3>
+    <textarea id="log_BPM" class="textareaStyle" readonly></textarea>
+    <br>
+    <button type="button" onclick="save_To_CSV()">Guardar BPM</button>
+    <button type="button" onclick="clear_BPM_Log()">Borrar BPM</button>
+    <br><br>
+    <h3 style="color:#00878F;">Señal PPG (Voltaje vs Tiempo)</h3>
+    <textarea id="log_PPG" class="textareaStyle" readonly></textarea>
+    <br>
+    <button type="button" onclick="save_PPG_To_CSV()">Guardar señal PPG</button>
+    <button type="button" onclick="clear_PPG_Log()">Borrar señal</button>
+    <script>
+      var axis_x = 0;
+      var axis_y = 0;
+      var last_BPM_TimeStamp = "";
+      var count_Down = 3;
+      var myInterval_Count_Down;
+      document.getElementById("bpm_Show").innerHTML = "&nbsp;0 BPM";
+      var P_show_Info = document.getElementById("show_Info");
+      setInterval(myTimer, 35);
+      if (!!window.EventSource) {
+        var source = new EventSource('/events');
+        source.addEventListener('open', function(e) {}, false);
+        source.addEventListener('error', function(e) {}, false);
+        source.addEventListener('message', function(e) {}, false);
+        source.addEventListener('allDataJSON', function(e) {
+          var obj = JSON.parse(e.data);
+          var get_Heartbeat_Signal = obj.heartbeat_Signal;
+          var get_BPM_TimeStamp = obj.BPM_TimeStamp;
+          var get_BPM_Val = obj.BPM_Val;
+          var get_BPM_State = obj.BPM_State;
+          if (get_Heartbeat_Signal > 850) get_Heartbeat_Signal = 800;
+          if (get_Heartbeat_Signal < 350) get_Heartbeat_Signal = 200;
+          axis_y = map(get_Heartbeat_Signal, 350, 850, 150, 0);
+          var ppg_textarea = document.getElementById('log_PPG');
+          var prevPPG = ppg_textarea.textContent;
+          if (typeof window.startTime_PPG === 'undefined') {
+            window.startTime_PPG = Date.now();
+          }
+          let elapsed = (Date.now() - window.startTime_PPG) / 1000;
+          let timestamp = elapsed.toFixed(3);
+          if (prevPPG == "") {
+            ppg_textarea.textContent = "Time,PPG\r\n" + timestamp + "," + get_Heartbeat_Signal;
+          } else {
+            ppg_textarea.textContent = prevPPG + "\r\n" + timestamp + "," + get_Heartbeat_Signal;
+          }
+          ppg_textarea.scrollTop = ppg_textarea.scrollHeight;
+          if (get_BPM_State == true) {
+            document.getElementById("bpm_Show").innerHTML = "&nbsp;" + get_BPM_Val + " BPM";
+            if (last_BPM_TimeStamp != get_BPM_TimeStamp) {
+              var my_textarea = document.getElementById('log_BPM');
+              var lastLog = my_textarea.textContent;
+              if (lastLog == "") {
+                my_textarea.textContent =  "Time,BPM\r\n" + get_BPM_TimeStamp + "," + get_BPM_Val;
+              } else {
+                my_textarea.textContent =  lastLog + "\r\n" + get_BPM_TimeStamp + "," + get_BPM_Val;
+              }
+              my_textarea.scrollTop = my_textarea.scrollHeight;
+            }
+            last_BPM_TimeStamp = get_BPM_TimeStamp;
+          } else {
+            document.getElementById("bpm_Show").innerHTML = "&nbsp;0 BPM";
+          }
+        }, false);
+      }
+      var canvas = document.getElementById('myCanvas');
+      var context = canvas.getContext('2d');
+      drawGraph();
+      context.beginPath();
+      context.lineWidth = 1;
+      context.strokeStyle = '#0583F2';
+      function drawGraph() {
+        context.beginPath();
+        [1,50,100,150,200,250,299].forEach(x => {
+          context.moveTo(x,150); context.lineTo(x,0);
+        });
+        [1,25,50,75,100,125,149].forEach(y => {
+          context.moveTo(0,y); context.lineTo(300,y);
+        });
+        context.lineWidth = 0.5;
+        context.strokeStyle = '#DCDCDC';
+        context.closePath();
+        context.stroke();
+      }
+      function set_Axis_XY(x,y) {
+        context.lineTo(x, y);
+        context.stroke();
+        if (axis_x > 300) reset_Graph();
+      }
+      function reset_Graph() {
+        axis_x = 0;
+        context.clearRect(0,0,300,150);
+        context.closePath();
+        drawGraph();
+        context.beginPath();
+        context.lineWidth = 1;
+        context.strokeStyle = '#0583F2';
+        context.moveTo(0,axis_y);
+      }
+      function myTimer() {
+        axis_x += 3;
+        set_Axis_XY(axis_x, axis_y);
+      }
+      function map(x, in_min, in_max, out_min, out_max){
+        return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+      }
+      function my_BTN_Start_Stop() {
+        reset_Graph();
+        var text = document.getElementById("BTN_Start_Stop").innerHTML;
+        if (text == "Start Calculating HeartBeat") {
+          document.getElementById("BTN_Start_Stop").innerHTML = "Stop Calculating HeartBeat";
+          send_BTN_Cmd("START");
+          count_Down = 3;
+          P_show_Info.style.display = "block";
+          document.getElementById("show_Info").innerHTML = "Please Wait...";
+          myInterval_Count_Down = setInterval(myTimer_Count_Down, 1000);
+        } else {
+          document.getElementById("BTN_Start_Stop").innerHTML = "Start Calculating HeartBeat";
+          send_BTN_Cmd("STOP");
+        }
+      }
+      function myTimer_Count_Down() {
+        count_Down -= 1;
+        document.getElementById("show_Info").innerHTML = "Please Wait " + (count_Down + 1);
+        if (count_Down < 0) {
+          P_show_Info.style.display = "none";
+          myStop_Count_Down();
+        }
+      }
+      function myStop_Count_Down() {
+        clearInterval(myInterval_Count_Down);
+      }
+      function save_To_CSV() {
+        var a = document.createElement('a');
+        a.href = 'data:text/csv;base64,' + btoa(document.getElementById('log_BPM').value);
+        a.download = 'BPMLog.csv';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      }
+      function clear_BPM_Log() {
+        if (confirm("Are you sure to clear the Log ?")) {
+          document.getElementById('log_BPM').textContent = "";
+        }
+      }
+      function send_BTN_Cmd(state) {
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", "BTN_Comd?BTN_Start_Get_BPM=" + state, true);
+        xhr.send();
+      }
+      function save_PPG_To_CSV() {
+        var a = document.createElement('a');
+        a.href = 'data:text/csv;base64,' + btoa(document.getElementById('log_PPG').value);
+        a.download = 'PPGLog.csv';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      }
+      function clear_PPG_Log() {
+        if (confirm("¿Estás seguro de borrar la señal PPG?")) {
+          document.getElementById('log_PPG').textContent = "";
+          window.startTime_PPG = Date.now();
+        }
+      }
+    </script>
+  </body>
+</html>
+)=====";
